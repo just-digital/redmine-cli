@@ -117,6 +117,7 @@ class RedmineCli(object):
         self.clear_buffer()
 
         output = """
+# FOR:          %(user)s
 # ISSUE:        %(id)s
 # PRIORITY:     %(priority)s
 # Status:       %(status)s
@@ -124,12 +125,10 @@ class RedmineCli(object):
 
 %(description)s
 
-""" % {"id":issue.id, "priority":issue.priority.name, "subject":issue.subject, 
-        "status":issue.status, "description": issue.description}
+""" % {"id": issue.id, "priority": issue.priority.name, "subject": issue.subject,
+       "status": issue.status, "description": issue.description, "user":issue.assigned_to.name}
 
         print(output)
-        print dir(issue)
-
 
     def list_issues(self):
         self.buffer_out("Fetching issues...")
@@ -150,7 +149,6 @@ class RedmineCli(object):
             for issue in issues:
                 self.cprint(*issue)
             print("–" * 134)
-
 
     def cprint(self, id, priority, subject, status, project):
         line = "| " + smart_str(id, 4) + " | " + smart_str(priority, 9) + " | " \
