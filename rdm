@@ -1,0 +1,205 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import sys
+import os
+import logging
+import urllib2
+import optparse
+from redmine import Redmine
+import configparser
+
+logger = logging.getLogger('redmine-cli')
+logger.setLevel(logging.DEBUG)
+console = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger.addHandler(console)
+
+verbosity = 0
+
+
+def get_config():
+    """
+    Reads all possible locations for config file in prioritized order.
+    1. Users home directory at ~/.rdm
+    2. Ubuntu default config /etc/default/rdm
+    3. Global config /etc/rdm/rdm.conf
+    """
+    global verbosity, logger
+
+    userpath = os.path.expanduser("~/.rdm")
+    defaultpath = "/etc/default/rdm"
+    globalpath = "/etc/redmine-cli/rdm.conf"
+
+    repository = None
+    api_key = None
+    default_project = None
+
+    # Read the config files in cascading style.
+    for path in [userpath, defaultpath, globalpath]:
+        if os.path.isfile(path):
+            if verbosity >= 1:
+                logger.info("Reading config from %s" % path)
+
+            config = configparser.ConfigParser()
+            config.read(path)
+
+            if repository is None:
+                repository = config['DEFAULT'].get('repository')
+                if verbosity >= 2:
+                    logger.info("repository setting in %s is %s and will be used" % (path, repository))
+
+            if api_key is None:
+                api_key = config['DEFAULT'].get('api_key')
+                if verbosity >= 2:
+                    logger.info("api_key setting in %s is %s and will be used" % (path, api_key))
+
+            if default_project is None:
+                default_project = config['DEFAULT'].get('default_project')
+                if verbosity >= 2:
+                    logger.info("default_project setting in %s is %s and will be used" % (path, default_project))
+
+        else:
+            if verbosity >= 1:
+                logger.info("Config file at %s does not exist" % path)
+
+    return [repository, api_key, default_project]
+
+
+def smart_str(subject, maxlen=0):
+    if isinstance(subject, basestring):
+        subject = subject.encode('ascii', 'ignore')
+        if maxlen > 0:
+            tokens = str(subject).split()
+            subject = " ".join(tokens)
+
+            if len(subject) > maxlen:
+                s = subject[:maxlen]
+                return s.ljust(maxlen)
+            else:
+                return subject.ljust(maxlen)
+
+    elif isinstance(subject, int):
+        subject = str(subject)
+        if maxlen > 0:
+            return subject.ljust(maxlen)
+
+    return str(subject)
+
+
+class RedmineCli(object):
+    """ Controller object to interface with """
+
+    repository = None
+    default_project = None
+
+    verbosity = 0  # Logging it turned off by default
+
+    def __init__(self, repository, api_key, project, **kwargs):
+        self.repository = repository
+        self.default_project = project
+        try:
+            self.redmine = Redmine(repository, key=api_key)
+            self.project = self.redmine.projects[project]
+        except Exception, e:
+            logger.error(e)
+            sys.exit(1)
+
+    def buffer_out(self, output=""):
+        sys.stdout.write("\r%s" % output)
+        sys.stdout.flush()
+
+    def clear_buffer(self):
+        self.buffer_out()
+
+    def issue(self, issue_number):
+        self.buffer_out("Fetching issue details...")
+        issue = self.redmine.issues[issue_number]
+        self.clear_buffer()
+
+        output = """
+# ISSUE:        %(id)s
+# PRIORITY:     %(priority)s
+# Status:       %(status)s
+# Subject:      %(subject)s
+
+%(description)s
+
+""" % {"id":issue.id, "priority":issue.priority.name, "subject":issue.subject, 
+        "status":issue.status, "description": issue.description}
+
+        print(output)
+        print dir(issue)
+
+
+    def list_issues(self):
+        self.buffer_out("Fetching issues...")
+
+        issues = []
+        try:
+            for i in self.project.issues(assigned_to_id=self.redmine.user.id):
+                issues.append([i.id, i.priority.name, i.subject, i.status.name, i.project.name])
+
+        except urllib2.HTTPError:
+            self.clear_buffer()
+            logger.error("Authentication failed")
+            sys.exit(1)
+
+        self.clear_buffer()
+        if issues:
+            print("–" * 134)
+            for issue in issues:
+                self.cprint(*issue)
+            print("–" * 134)
+
+
+    def cprint(self, id, priority, subject, status, project):
+        line = "| " + smart_str(id, 4) + " | " + smart_str(priority, 9) + " | " \
+               + smart_str(subject, 80) + " | " + smart_str(status, 10) + " | " \
+               + smart_str(project, 15) + " | "
+        print(line)
+
+
+def main(args):
+    """ Main program execution """
+    global logger, verbosity
+
+    p = optparse.OptionParser()
+    p.add_option("-r", "--repo", "--repository",
+                 action="store", type="string", dest="repository",
+                 help="Specify the repository to use")
+    p.add_option("-k", "--key", action="store", type="string", dest="key",
+                 help="Redmine API KEY.")
+    p.add_option("-p", "--project", action="store", type="string", dest="project",
+                 help="Specify the project to use")
+    p.add_option("-i", "--issue",
+                 action="store", type="int", dest="issue",
+                 help="show details about specific issue")
+    p.add_option("--verbosity", action="store", type="int", dest="verbosity",
+                 help="Level of verbosity from 0..2 for logging")
+    (options, args) = p.parse_args(args)
+
+    if options.verbosity:
+        verbosity = options.verbosity
+
+    # Read from local config files
+    config = get_config()
+
+    # Command line args will override config
+    if options.repository is not None:
+        config[0] = options.repository
+    if options.key is not None:
+        config[1] = options.key
+    if options.project is not None:
+        config[2] = options.project
+
+    controller = RedmineCli(*config)
+
+    if options.issue:
+        controller.issue(options.issue)
+    else:
+        controller.list_issues()
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
+

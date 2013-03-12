@@ -1,0 +1,4 @@
+configparser==3.3.0r2
+pyredmine==0.2.4
+python-dateutil==2.1
+
